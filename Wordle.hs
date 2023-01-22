@@ -16,7 +16,8 @@ import Data.Char
 import Text.Read
 import Data.Maybe
 
--- NEW STUFF
+-- Programmed on Windows, which was... frustrating.
+-- One character at a time doesn't really work properly in Windows terminals. 
 
 data Model =
   WordleModel {
@@ -48,9 +49,9 @@ howToPlay = "\
 \\
 \Examples\
 \\
-\  W [e][a][r][y]  The letter W is in the word and in the correct spot.\
-\ [p] i [l][l][s]  The letter I is in the word but in the wrong spot.\
-\ [v][a][g][u][e]  None of the letters are in the word in any spot."
+\ \x1b[48;5;82m W \x1b[0m\x1b[48;5;243m e a r y \x1b[0m  The letter W is in the word and in the correct spot.\
+\ \x1b[48;5;243m p \x1b[0m\x1b[48;5;226m i l l s \x1b[0m  The letter I is in the word but in the wrong spot.\
+\ \x1b[48;5;243m v a g u e \x1b[0m  None of the letters are in the word in any spot."
 
 tooManyArgs = "Usage:\
 \\
@@ -196,37 +197,49 @@ controller model flag =
     else 
       printPrompt flag;
       geese <- getChar;
-      let { guess = map toLower (modelCurrGuess model ++ [geese]);
-            guessColor = map (charColor answer guess) 
-            (zip [0..(length guess - 1)] guess) } in
+      geese <- newChar geese; -- I cannot get this to work on Windows with enter properly
       if isAlpha geese then
-        do {
-          putStrLn ">";
-          view (update 
-                            (KeyPress geese)
-                            (WordleModel wordList answer board 
-                            guess guessColor guesses keyboard));
-          if answer == guess then do {
-            putStrLn (getCaption (modelGuessesLeft (update 
-              (KeyPress geese)
-              (WordleModel wordList answer 
-              board guess guessColor guesses keyboard))));
-            exitSuccess;
-          }
-          else do {
-            putStrLn "";
-            printKeyboard (updateKeyboard (WordleModel wordList answer board 
-                            guess guessColor guesses keyboard));
-            putStrLn "";
-            controller (updateKeyboard (update 
-                          (KeyPress geese) 
-                          (WordleModel wordList answer board 
-                           guess guessColor guesses keyboard))) ""
+          let { guess = map toLower (modelCurrGuess model);
+          guessColor = map (charColor answer (guess ++ [geese])) 
+          (zip [0..(length guess)] (guess ++ [geese])) } in
+          do {
+            putStrLn ">";
+            view (update 
+                              (KeyPress geese)
+                              (WordleModel wordList answer board 
+                              guess guessColor guesses keyboard));
+            if answer == (guess ++ [geese]) then do {
+              putStrLn (getCaption (modelGuessesLeft (update 
+                (KeyPress geese)
+                (WordleModel wordList answer 
+                board guess guessColor guesses keyboard))));
+              exitSuccess;
+            }
+            else do {
+              putStrLn "";
+              if length guess == 4 then
+                printKeyboard (updateKeyboard (WordleModel wordList answer board 
+                              guess guessColor guesses keyboard) (guess ++ [geese]));
+              else return ();
+              putStrLn "";
+              putStrLn ("Current guess: " ++ (guess ++ [geese]));
+              let { guessColor = map (charColor answer (guess ++ [geese])) 
+                (zip [0..(length guess)] (guess ++ [geese]));
+                guess = map toLower (modelCurrGuess model) } in
+                if length guess == 4 then
+                  controller (updateKeyboard (update 
+                              (KeyPress geese) 
+                              (WordleModel wordList answer board 
+                              guess guessColor guesses keyboard)) 
+                              guess) "";
+                else controller (update (KeyPress geese) 
+                              (WordleModel wordList answer board 
+                              guess guessColor guesses keyboard)) "";    
           }
         }
       else
         do {
-          putStrLn (">" ++ invalidWordHandler guess wordList);
+          putStrLn (">" ++ invalidWordHandler [geese] wordList);
           putStrLn "";
           view model;
           putStrLn "";
@@ -234,6 +247,11 @@ controller model flag =
           [] guesses keyboard) "";
         }
   }
+
+-- Ignores newlines.
+newChar :: Char -> IO Char
+newChar '\n' = getChar
+newChar c = return c
 
 -- | Returns an appropriate message for an invalid word.
 invalidWordHandler :: String -> [String] -> String
@@ -249,11 +267,14 @@ update keyEv model =
   answer = modelAnswer model; 
   board = modelBoard model; 
   guess = modelCurrGuess model;
-  guessColor = modelGuessColor model;
+  guessColor = map (charColor answer guess)  (zip [0..(length guess - 1)] guess);
   guessesLeft = modelGuessesLeft model;
   keyboard = modelKeyboard model;
   acChar = cVal keyEv } in
-    if length guess >= 4 then
+    if length guess >= 5 then
+      WordleModel wordList answer (board ++ [take 5 guess]) 
+      "" guessColor (guessesLeft - 1) keyboard
+    else if length guess >= 4 then
       WordleModel wordList answer (board ++ [guess ++ [acChar]]) 
       "" guessColor 
       (guessesLeft - 1) keyboard 
@@ -267,6 +288,8 @@ charColor answer guess (i, letter) =
     (letter, "green")
   else if null (elemIndices letter answer) then
     (letter, "gray")
+  else if head (elemIndices letter answer) - 1 > length guess then
+    (letter, "yellow")
   else
     if guess !! head (elemIndices letter answer) == letter then
       (letter, "gray")
@@ -278,8 +301,10 @@ addLetterKB :: (Char, String) -> [(Char, String)] -> [(Char, String)]
 addLetterKB letter keyboard = 
   if snd letter == "none" then keyboard
   else if snd letter == "gray" then
-    take (head (elemIndices (fst letter, "none") keyboard)) keyboard ++ [letter]
-      ++ drop (head (elemIndices (fst letter, "none") keyboard) + 1) keyboard
+    if null (elemIndices (fst letter, "none") keyboard) then keyboard
+    else
+      take (head (elemIndices (fst letter, "none") keyboard)) keyboard ++ [letter]
+        ++ drop (head (elemIndices (fst letter, "none") keyboard) + 1) keyboard
   else if snd letter == "yellow" then
     if null (elemIndices (fst letter, "gray") keyboard) 
       && null (elemIndices (fst letter, "none") keyboard) then keyboard
@@ -304,10 +329,10 @@ addLetterKB letter keyboard =
         ++ drop (head (elemIndices (fst letter, "yellow") keyboard) + 1) keyboard
 
 -- | Update a game's keyboard.
-updateKeyboard :: Model -> Model
-updateKeyboard model =
-  if null (modelCurrGuess model) then model
-  else if length (modelCurrGuess model) == 1 then
+updateKeyboard :: Model -> String -> Model
+updateKeyboard model origGuess =
+  if null origGuess then model
+  else if length origGuess == 1 then
     let { wordList = modelWordList model;
         answer = modelAnswer model;
         board = modelBoard model;
@@ -317,20 +342,21 @@ updateKeyboard model =
         keyboard = modelKeyboard model } in 
       WordleModel wordList answer board guess guessColor guesses 
         (addLetterKB 
-        (head guess, snd (guessColor !! (length guess - 1))) 
+        (head origGuess, snd (guessColor !! (length guessColor - 1))) 
         keyboard)
   else 
     let { wordList = modelWordList model;
         answer = modelAnswer model;
         board = modelBoard model;
-        (g:guess) = modelCurrGuess model;
+        (og:oguess) = origGuess;
+        guess = modelCurrGuess model;
         (gc:guessColor) = modelGuessColor model; 
         guesses = modelGuessesLeft model;
         keyboard = modelKeyboard model } in
       updateKeyboard (WordleModel wordList answer board guess guessColor guesses 
           (addLetterKB 
-          (g, snd gc)
-          keyboard))
+          (og, snd gc)
+          keyboard)) oguess
     
 --------------------------------------------------------------------------------
 -- View
